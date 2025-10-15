@@ -1,0 +1,1 @@
+<div {{ $attributes->twMerge('w-full h-8') }}></div>
