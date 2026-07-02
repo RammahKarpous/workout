@@ -15,21 +15,31 @@ export async function requireUser(
 	return user;
 }
 
+export async function getOrCreateUser(
+	ctx: MutationCtx,
+): Promise<Doc<"users">> {
+	const identity = await ctx.auth.getUserIdentity();
+	if (!identity) throw new Error("Unauthenticated");
+
+	const existing = await ctx.db
+		.query("users")
+		.withIndex("by_clerkUserId", (q) => q.eq("clerkUserId", identity.subject))
+		.unique();
+	if (existing) return existing;
+
+	const userId = await ctx.db.insert("users", {
+		clerkUserId: identity.subject,
+		email: identity.email,
+	});
+	const user = await ctx.db.get(userId);
+	if (!user) throw new Error("Failed to create user");
+	return user;
+}
+
 export const ensure = mutation({
 	args: {},
 	handler: async (ctx) => {
-		const identity = await ctx.auth.getUserIdentity();
-		if (!identity) throw new Error("Unauthenticated");
-
-		const existing = await ctx.db
-			.query("users")
-			.withIndex("by_clerkUserId", (q) => q.eq("clerkUserId", identity.subject))
-			.unique();
-		if (existing) return existing._id;
-
-		return await ctx.db.insert("users", {
-			clerkUserId: identity.subject,
-			email: identity.email,
-		});
+		const user = await getOrCreateUser(ctx);
+		return user._id;
 	},
 });

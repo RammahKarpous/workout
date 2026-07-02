@@ -2,28 +2,32 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useMutation, useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
-import type { Doc, Id } from "@/convex/_generated/dataModel";
+import Link from "next/link";
+import type { Doc } from "@/convex/_generated/dataModel";
 import { ExercisePicker } from "@/components/ExercisePicker";
+import { useRoutine } from "@/lib/data/useRoutine";
+import { useRemoveRoutine } from "@/lib/data/useRemoveRoutine";
+import { useAddRoutineExercise } from "@/lib/data/useAddRoutineExercise";
+import { useRemoveRoutineExercise } from "@/lib/data/useRemoveRoutineExercise";
+import type { RoutineExerciseDTO } from "@/lib/data/types";
 
 export function RoutineDetailClient({ routineId }: { routineId: string }) {
-	const id = routineId as Id<"routines">;
-	const routine = useQuery(api.routines.get, { routineId: id });
-	const removeRoutine = useMutation(api.routines.remove);
+	const { routine, isLoading } = useRoutine(routineId);
+	const removeRoutine = useRemoveRoutine();
+	const removeRoutineExercise = useRemoveRoutineExercise();
 	const router = useRouter();
 	const [addingExercise, setAddingExercise] = useState(false);
 
-	if (routine === undefined) {
+	if (isLoading) {
 		return <div className="max-w-2xl mx-auto w-full p-6 text-sm opacity-60">Loading…</div>;
 	}
-	if (routine === null) {
+	if (!routine) {
 		return <div className="max-w-2xl mx-auto w-full p-6 text-sm opacity-60">Routine not found.</div>;
 	}
 
 	async function handleDelete() {
 		if (!confirm(`Delete "${routine!.name}"? This cannot be undone.`)) return;
-		await removeRoutine({ routineId: id });
+		await removeRoutine(routineId);
 		router.push("/routines");
 	}
 
@@ -36,17 +40,32 @@ export function RoutineDetailClient({ routineId }: { routineId: string }) {
 						<p className="text-sm opacity-60">{routine.description}</p>
 					)}
 				</div>
-				<button
-					onClick={handleDelete}
-					className="text-sm text-red-600 dark:text-red-400 hover:underline"
-				>
-					Delete
-				</button>
+				<div className="flex items-center gap-4">
+					{routine.exercises.length > 0 && (
+						<Link
+							href={`/log/new?routineId=${routineId}`}
+							className="rounded bg-foreground text-background px-3 py-1.5 text-sm font-medium"
+						>
+							Start Workout
+						</Link>
+					)}
+					<button
+						onClick={handleDelete}
+						className="text-sm text-red-600 dark:text-red-400 hover:underline"
+					>
+						Delete
+					</button>
+				</div>
 			</div>
 
 			<ul className="flex flex-col gap-2 mb-6">
 				{routine.exercises.map((re) => (
-					<RoutineExerciseRow key={re._id} routineExercise={re} />
+					<RoutineExerciseRow
+						key={re.id}
+						routineId={routineId}
+						routineExercise={re}
+						onRemove={() => removeRoutineExercise(routineId, re.id)}
+					/>
 				))}
 				{routine.exercises.length === 0 && (
 					<li className="text-sm opacity-60">No exercises added yet.</li>
@@ -55,7 +74,7 @@ export function RoutineDetailClient({ routineId }: { routineId: string }) {
 
 			{addingExercise ? (
 				<AddExerciseFlow
-					routineId={id}
+					routineId={routineId}
 					onDone={() => setAddingExercise(false)}
 				/>
 			) : (
@@ -72,10 +91,12 @@ export function RoutineDetailClient({ routineId }: { routineId: string }) {
 
 function RoutineExerciseRow({
 	routineExercise,
+	onRemove,
 }: {
-	routineExercise: Doc<"routineExercises"> & { exercise: Doc<"exercises"> | null };
+	routineId: string;
+	routineExercise: RoutineExerciseDTO;
+	onRemove: () => void;
 }) {
-	const removeExercise = useMutation(api.routineExercises.remove);
 	const re = routineExercise;
 
 	const repsLabel =
@@ -83,21 +104,18 @@ function RoutineExerciseRow({
 			? re.targetRepsMin === re.targetRepsMax
 				? `${re.targetRepsMin}`
 				: `${re.targetRepsMin}-${re.targetRepsMax}`
-			: re.targetRepsMin ?? re.targetRepsMax ?? "—";
+			: (re.targetRepsMin ?? re.targetRepsMax ?? "—");
 
 	return (
 		<li className="flex items-center justify-between rounded-lg border border-black/10 dark:border-white/15 px-4 py-3">
 			<div>
-				<div className="font-medium">{re.exercise?.name ?? "Unknown exercise"}</div>
+				<div className="font-medium">{re.exerciseName}</div>
 				<div className="text-sm opacity-60">
 					{re.targetSets} sets × {repsLabel} reps
 					{re.targetWeight !== undefined ? ` @ ${re.targetWeight}` : ""}
 				</div>
 			</div>
-			<button
-				onClick={() => removeExercise({ routineExerciseId: re._id })}
-				className="text-sm opacity-60 hover:opacity-100"
-			>
+			<button onClick={onRemove} className="text-sm opacity-60 hover:opacity-100">
 				Remove
 			</button>
 		</li>
@@ -108,11 +126,11 @@ function AddExerciseFlow({
 	routineId,
 	onDone,
 }: {
-	routineId: Id<"routines">;
+	routineId: string;
 	onDone: () => void;
 }) {
 	const [selected, setSelected] = useState<Doc<"exercises"> | null>(null);
-	const addExercise = useMutation(api.routineExercises.add);
+	const addExercise = useAddRoutineExercise();
 	const [targetSets, setTargetSets] = useState(3);
 	const [repsMin, setRepsMin] = useState(8);
 	const [repsMax, setRepsMax] = useState(12);
@@ -131,9 +149,9 @@ function AddExerciseFlow({
 
 	async function handleAdd(e: React.FormEvent) {
 		e.preventDefault();
-		await addExercise({
-			routineId,
+		await addExercise(routineId, {
 			exerciseId: selected!._id,
+			exerciseName: selected!.name,
 			targetSets,
 			targetRepsMin: repsMin,
 			targetRepsMax: repsMax,
